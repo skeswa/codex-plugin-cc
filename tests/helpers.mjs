@@ -12,10 +12,20 @@ export function writeExecutable(filePath, source) {
   fs.writeFileSync(filePath, source, { encoding: "utf8", mode: 0o755 });
 }
 
+const HOST_INJECTED_ENV_VARS = ["CODEX_COMPANION_SESSION_ID"];
+
+function buildSanitizedEnv() {
+  const env = { ...process.env };
+  for (const key of HOST_INJECTED_ENV_VARS) {
+    delete env[key];
+  }
+  return env;
+}
+
 export function run(command, args, options = {}) {
   return spawnSync(command, args, {
     cwd: options.cwd,
-    env: options.env,
+    env: options.env ?? buildSanitizedEnv(),
     encoding: "utf8",
     input: options.input,
     shell: process.platform === "win32" && !path.isAbsolute(command),
