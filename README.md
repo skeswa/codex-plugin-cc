@@ -6,11 +6,54 @@ This is a fork of [`openai/codex-plugin-cc`](https://github.com/openai/codex-plu
 
 <video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
 
+## What this fork changes
+
+Compared to upstream, this fork:
+
+- **Adds a VCS dispatcher** that auto-detects whether `cwd` lives inside a `.jj/` or `.git/` repo (jj wins in colocated repos) and routes review commands to the matching backend.
+- **Adds a Jujutsu backend** alongside the existing git backend. The jj backend implements the same surface (`ensureRepository`, `resolveReviewTarget`, `collectReviewContext`, etc.) using `jj` commands and emits diffs in `--git` format so the Codex review prompt is unchanged.
+- **Redefines `auto` scope for jj**: the default review target is the chain `heads(::@- & bookmarks())..@` — i.e., everything since the closest ancestor bookmark of `@`. If `@` is itself bookmarked, the chain skips past it. With no ancestor bookmark, it falls back to `trunk()..@`.
+- **Repurposes `--scope working-tree` and `--scope branch` in jj mode**: working-tree means `@-..@` (just the working-copy commit's diff); branch means `trunk()..@`. `--base <revset>` accepts any jj revset.
+- **Adds a `review-preflight` companion subcommand** that returns `vcs / target_label / file_count / lines_added / lines_removed / recommendation`. The two review command markdowns now call this single VCS-agnostic helper instead of running git-specific shell commands inline.
+- **Treats jj workspaces as first-class** (`jj workspace add ...`). No extra configuration — each workspace has its own `@` and the plugin uses whichever one `cwd` lives in.
+
+Git-only users see no behavior change: `git.mjs` is untouched, all existing git tests still pass.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User[User in Claude Code]
+    User -->|/codex:review or /codex:adversarial-review| CommandMd[review.md / adversarial-review.md]
+
+    CommandMd -->|node companion review-preflight| Preflight[review-preflight handler]
+    CommandMd -->|node companion review| ReviewRun[executeReviewRun]
+
+    Preflight --> VCS
+    ReviewRun --> VCS
+
+    subgraph Companion[plugins/codex/scripts]
+      Preflight
+      ReviewRun
+      VCS[lib/vcs.mjs<br/>dispatcher]
+      VCS -->|.jj found first| JJ[lib/jj.mjs<br/>jj backend]
+      VCS -->|.git only| Git[lib/git.mjs<br/>git backend]
+    end
+
+    JJ -->|jj root / jj log -r revset / jj diff --git| JJBin[(jj CLI)]
+    Git -->|git rev-parse / git diff / git log| GitBin[(git CLI)]
+
+    ReviewRun -->|diff/log/status text| Codex[(Codex app server)]
+    Codex -->|review output| User
+```
+
+The dispatcher caches detection by `cwd`, so within a single command invocation we walk the filesystem at most once per directory. The jj backend exclusively uses revsets (`heads(...)`, `<base>..@`, `trunk()`, `@-`, `@`) so there are no special cases for detached HEADs, missing branches, or remote tracking — the revset language handles them uniformly.
+
 ## What You Get
 
-- `/codex:review` for a normal read-only Codex review
-- `/codex:adversarial-review` for a steerable challenge review
-- `/codex:rescue`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work and manage background jobs
+- `/codex:review` for a normal read-only Codex review (jj: chain since last bookmark; git: working tree or branch)
+- `/codex:adversarial-review` for a steerable challenge review (same scope semantics as `/codex:review`)
+- `/codex:rescue`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work and manage background jobs (VCS-agnostic)
 
 ## Requirements
 
