@@ -79,33 +79,60 @@ Both Git and Jujutsu work out of the box. The plugin walks up from `cwd` looking
 
 ## Install
 
-Add the marketplace in Claude Code:
+This fork is meant to be installed from a local clone (not from a published marketplace). The repo ships its own `.claude-plugin/marketplace.json` so Claude Code can read it directly off disk.
+
+**Step 1 — clone the fork:**
 
 ```bash
-/plugin marketplace add openai/codex-plugin-cc
+git clone https://github.com/skeswa/codex-plugin-cc.git
+cd codex-plugin-cc
 ```
 
-Install the plugin:
+**Step 2 — register the local checkout as a Claude Code marketplace.** Use an absolute path. `pwd` works inside the cloned directory; otherwise pass the full path explicitly. In Claude Code:
 
-```bash
-/plugin install codex@openai-codex
+```
+/plugin marketplace add /absolute/path/to/codex-plugin-cc
 ```
 
-Reload plugins:
+The marketplace name is `codex-jj` (defined in `.claude-plugin/marketplace.json`).
 
-```bash
+**Step 3 — install the plugin from that marketplace:**
+
+```
+/plugin install codex@codex-jj
+```
+
+**Step 4 — reload so the slash commands appear:**
+
+```
 /reload-plugins
 ```
 
-Then run:
+After this you should see `/codex:review`, `/codex:adversarial-review`, `/codex:rescue`, etc., plus the `codex:codex-rescue` subagent under `/agents`.
 
-```bash
+**Step 5 — verify Codex itself is ready:**
+
+```
 /codex:setup
 ```
 
 `/codex:setup` will tell you whether Codex is ready. If Codex is missing and npm is available, it can offer to install Codex for you.
 
-If you prefer to install Codex yourself, use:
+### Updating after you pull or edit the fork
+
+Claude Code copies the plugin to `~/.claude/plugins/cache/` at install time, so edits to your local checkout are not picked up automatically. After a `git pull` or local edits:
+
+```
+/plugin marketplace update codex-jj
+/plugin install codex@codex-jj
+/reload-plugins
+```
+
+If you're iterating heavily, you can drop the `version` field from `.claude-plugin/marketplace.json` and `plugins/codex/.claude-plugin/plugin.json` — Claude Code then treats every git commit as a new version and refreshes on `marketplace update`.
+
+Reference: [Claude Code plugin marketplaces docs](https://code.claude.com/docs/en/plugin-marketplaces).
+
+If you prefer to install the Codex CLI yourself instead of letting `/codex:setup` do it:
 
 ```bash
 npm install -g @openai/codex
@@ -117,12 +144,7 @@ If Codex is installed but not logged in yet, run:
 !codex login
 ```
 
-After install, you should see:
-
-- the slash commands listed below
-- the `codex:codex-rescue` subagent in `/agents`
-
-One simple first run is:
+A simple first run is:
 
 ```bash
 /codex:review --background

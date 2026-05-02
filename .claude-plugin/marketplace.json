@@ -1,19 +1,19 @@
 {
-  "name": "openai-codex",
+  "name": "codex-jj",
   "owner": {
-    "name": "OpenAI"
+    "name": "Sandile Keswa"
   },
   "metadata": {
-    "description": "Codex plugins to use in Claude Code for delegation and code review.",
+    "description": "Jujutsu-first fork of the Codex plugin for Claude Code. Reviews are scoped to the jj revision chain since the closest ancestor bookmark; full Git fallback.",
     "version": "1.0.4"
   },
   "plugins": [
     {
       "name": "codex",
-      "description": "Use Codex from Claude Code to review code or delegate tasks.",
+      "description": "Use Codex from Claude Code to review code or delegate tasks. Jujutsu-first with Git support.",
       "version": "1.0.4",
       "author": {
-        "name": "OpenAI"
+        "name": "Sandile Keswa"
       },
       "source": "./plugins/codex"
     }
