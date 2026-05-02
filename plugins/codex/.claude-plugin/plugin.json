@@ -1,8 +1,8 @@
 {
-  "name": "codex",
+  "name": "codex-jj",
   "version": "1.0.4",
   "description": "Use Codex from Claude Code to review code or delegate tasks. Jujutsu-first with Git support.",
   "author": {
-    "name": "OpenAI"
+    "name": "Sandile Keswa"
   }
 }

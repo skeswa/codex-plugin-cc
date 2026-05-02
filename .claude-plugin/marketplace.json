@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "codex",
+      "name": "codex-jj",
       "description": "Use Codex from Claude Code to review code or delegate tasks. Jujutsu-first with Git support.",
       "version": "1.0.4",
       "author": {

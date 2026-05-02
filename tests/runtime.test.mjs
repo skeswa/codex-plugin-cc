@@ -886,7 +886,7 @@ test("review rejects focus text", () => {
 
   assert.equal(result.status > 0, true);
   assert.match(result.stderr, /does not support custom focus text/i);
-  assert.match(result.stderr, /\/codex:adversarial-review focus on auth/i);
+  assert.match(result.stderr, /\/codex-jj:adversarial-review focus on auth/i);
 });
 
 test("review rejects staged-only scope", () => {
@@ -1045,7 +1045,7 @@ test("status shows phases, hints, and the latest finished job", () => {
   assert.match(result.stdout, /Active jobs:/);
   assert.match(result.stdout, /\| Job \| Kind \| Status \| Phase \| Elapsed \| Codex Session ID \| Summary \| Actions \|/);
   assert.match(result.stdout, /\| review-live \| review \| running \| reviewing \| .* \| thr_1 \| Review working tree diff \|/);
-  assert.match(result.stdout, /`\/codex:status review-live`<br>`\/codex:cancel review-live`/);
+  assert.match(result.stdout, /`\/codex-jj:status review-live`<br>`\/codex-jj:cancel review-live`/);
   assert.match(result.stdout, /Live details:/);
   assert.match(result.stdout, /Latest finished:/);
   assert.match(result.stdout, /Progress:/);
@@ -1932,8 +1932,8 @@ test("stop hook logs running tasks to stderr without blocking when the review ga
   assert.equal(blocked.status, 0, blocked.stderr);
   assert.equal(blocked.stdout.trim(), "");
   assert.match(blocked.stderr, /Codex task task-live is still running/i);
-  assert.match(blocked.stderr, /\/codex:status/i);
-  assert.match(blocked.stderr, /\/codex:cancel task-live/i);
+  assert.match(blocked.stderr, /\/codex-jj:status/i);
+  assert.match(blocked.stderr, /\/codex-jj:cancel task-live/i);
 });
 
 test("stop hook allows the stop when the review gate is enabled and the stop-time review task is clean", () => {
@@ -1985,7 +1985,7 @@ test("stop hook does not block when Codex is unavailable even if the review gate
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(allowed.stdout.trim(), "");
   assert.match(allowed.stderr, /Codex is not set up for the review gate/i);
-  assert.match(allowed.stderr, /Run \/codex:setup/i);
+  assert.match(allowed.stderr, /Run \/codex-jj:setup/i);
 });
 
 test("stop hook runs the actual task when auth status looks stale", () => {
