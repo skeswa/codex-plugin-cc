@@ -6,7 +6,16 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
+import {
+  initGitRepo,
+  initJjRepo,
+  jjAvailable,
+  jjBookmarkCreate,
+  jjDescribe,
+  jjNew,
+  makeTempDir,
+  run
+} from "./helpers.mjs";
 import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
@@ -230,6 +239,61 @@ test("review accepts the quoted raw argument style for built-in base-branch revi
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Reviewed changes against main/);
   assert.match(result.stdout, /No material issues found/);
+});
+
+test("review uses structured context fallback for jj chain targets", { skip: !jjAvailable() }, () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initJjRepo(repo);
+  fs.mkdirSync(path.join(repo, "src"));
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "export const value = 1;\n");
+  jjDescribe(repo, "init");
+  jjBookmarkCreate(repo, "checkpoint", "@");
+  jjNew(repo, "change");
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "export const value = 2;\n");
+
+  const result = run("node", [SCRIPT, "review"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /# Codex Review/);
+  assert.match(result.stdout, /Target: chain since/);
+  assert.match(result.stdout, /No material findings/);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.match(state.lastTurnStart.prompt, /software code review/);
+  assert.match(state.lastTurnStart.prompt, /read-only jj commands|primary evidence/i);
+  assert.doesNotMatch(state.lastTurnStart.prompt, /adversarial software review/);
+});
+
+test("review-preflight fails instead of recommending wait when jj sizing fails", { skip: !jjAvailable() }, () => {
+  const repo = makeTempDir();
+  initJjRepo(repo);
+  fs.writeFileSync(path.join(repo, "base.txt"), "base\n");
+  jjDescribe(repo, "base");
+  jjBookmarkCreate(repo, "main", "@");
+
+  run("jj", ["new", "-m", "left", "main"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "left.txt"), "left\n");
+  jjBookmarkCreate(repo, "left", "@");
+
+  run("jj", ["new", "-m", "right", "main"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "right.txt"), "right\n");
+  jjBookmarkCreate(repo, "right", "@");
+
+  run("jj", ["new", "-m", "merge", "left", "right"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "merge.txt"), "merge\n");
+
+  const result = run("node", [SCRIPT, "review-preflight", "--base", "left | right"], {
+    cwd: repo
+  });
+
+  assert.equal(result.status > 0, true);
+  assert.match(result.stdout, /vcs: jj/);
+  assert.match(result.stdout, /error:/);
+  assert.doesNotMatch(result.stdout, /recommendation: wait/);
 });
 
 test("adversarial review renders structured findings over app-server turn/start", () => {
@@ -833,7 +897,7 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
 });
 
-test("review rejects focus text because it is native-review only", () => {
+test("review rejects focus text", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
@@ -850,10 +914,10 @@ test("review rejects focus text because it is native-review only", () => {
 
   assert.equal(result.status > 0, true);
   assert.match(result.stderr, /does not support custom focus text/i);
-  assert.match(result.stderr, /\/codex:adversarial-review focus on auth/i);
+  assert.match(result.stderr, /\/codex-jj:adversarial-review focus on auth/i);
 });
 
-test("review rejects staged-only scope because it is native-review only", () => {
+test("review rejects staged-only scope", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
@@ -1009,7 +1073,7 @@ test("status shows phases, hints, and the latest finished job", () => {
   assert.match(result.stdout, /Active jobs:/);
   assert.match(result.stdout, /\| Job \| Kind \| Status \| Phase \| Elapsed \| Codex Session ID \| Summary \| Actions \|/);
   assert.match(result.stdout, /\| review-live \| review \| running \| reviewing \| .* \| thr_1 \| Review working tree diff \|/);
-  assert.match(result.stdout, /`\/codex:status review-live`<br>`\/codex:cancel review-live`/);
+  assert.match(result.stdout, /`\/codex-jj:status review-live`<br>`\/codex-jj:cancel review-live`/);
   assert.match(result.stdout, /Live details:/);
   assert.match(result.stdout, /Latest finished:/);
   assert.match(result.stdout, /Progress:/);
@@ -1896,8 +1960,8 @@ test("stop hook logs running tasks to stderr without blocking when the review ga
   assert.equal(blocked.status, 0, blocked.stderr);
   assert.equal(blocked.stdout.trim(), "");
   assert.match(blocked.stderr, /Codex task task-live is still running/i);
-  assert.match(blocked.stderr, /\/codex:status/i);
-  assert.match(blocked.stderr, /\/codex:cancel task-live/i);
+  assert.match(blocked.stderr, /\/codex-jj:status/i);
+  assert.match(blocked.stderr, /\/codex-jj:cancel task-live/i);
 });
 
 test("stop hook allows the stop when the review gate is enabled and the stop-time review task is clean", () => {
@@ -1949,7 +2013,7 @@ test("stop hook does not block when Codex is unavailable even if the review gate
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(allowed.stdout.trim(), "");
   assert.match(allowed.stderr, /Codex is not set up for the review gate/i);
-  assert.match(allowed.stderr, /Run \/codex:setup/i);
+  assert.match(allowed.stderr, /Run \/codex-jj:setup/i);
 });
 
 test("stop hook runs the actual task when auth status looks stale", () => {

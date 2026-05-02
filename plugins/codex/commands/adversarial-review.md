@@ -2,7 +2,7 @@
 description: Run a Codex review that challenges the implementation approach and design choices
 argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [focus ...]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(jj:*), AskUserQuestion
 ---
 
 Run an adversarial Codex review through the shared plugin runtime.
@@ -11,6 +11,11 @@ It is not just a stricter pass over implementation defects.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
+
+VCS scope:
+- In a Jujutsu repo (default), the review covers the chain of revisions since the closest first-parent ancestor bookmark of `@`. If `@` itself is on a bookmark, the chain stops at the previous bookmark. With no ancestor bookmark, falls back to `trunk()..@`.
+- In a Git repo, the review covers the working tree if it is dirty, otherwise the diff against the detected default branch.
+- `--base <ref>` overrides in either VCS. `--scope working-tree` means uncommitted changes (git) or `@-..@` (jj). `--scope branch` means default-branch diff (git) or `trunk()..@` (jj).
 
 Core constraint:
 - This command is review-only.
@@ -21,16 +26,15 @@ Core constraint:
 Execution mode rules:
 - If the raw arguments include `--wait`, do not ask. Run in the foreground.
 - If the raw arguments include `--background`, do not ask. Run in a Claude background task.
-- Otherwise, estimate the review size before asking:
-  - For working-tree review, start with `git status --short --untracked-files=all`.
-  - For working-tree review, also inspect both `git diff --shortstat --cached` and `git diff --shortstat`.
-  - For base-branch review, use `git diff --shortstat <base>...HEAD`.
-  - Treat untracked files or directories as reviewable work for auto or working-tree review even when `git diff --shortstat` is empty.
-  - Only conclude there is nothing to review when the relevant scope is actually empty.
-  - Recommend waiting only when the scoped review is clearly tiny, roughly 1-2 files total and no sign of a broader directory-sized change.
-  - In every other case, including unclear size, recommend background.
-  - When in doubt, run the review instead of declaring that there is nothing to review.
-- Then use `AskUserQuestion` exactly once with two options, putting the recommended option first and suffixing its label with `(Recommended)`:
+- Otherwise, estimate the review size with a single command:
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review-preflight "$ARGUMENTS"
+  ```
+  - Read its `recommendation:` line (`wait` or `background`) and use it as the default.
+  - If `recommendation: wait`, suffix `Wait for results` with `(Recommended)`.
+  - If `recommendation: background`, suffix `Run in background` with `(Recommended)`.
+  - If preflight reports an error (e.g., empty chain), surface that to the user instead of running the review.
+- Then use `AskUserQuestion` exactly once with two options, putting the recommended option first:
   - `Wait for results`
   - `Run in background`
 
@@ -39,10 +43,10 @@ Argument handling:
 - Do not strip `--wait` or `--background` yourself.
 - Do not weaken the adversarial framing or rewrite the user's focus text.
 - The companion script parses `--wait` and `--background`, but Claude Code's `Bash(..., run_in_background: true)` is what actually detaches the run.
-- `/codex:adversarial-review` uses the same review target selection as `/codex:review`.
+- `/codex-jj:adversarial-review` uses the same review target selection as `/codex-jj:review`.
 - It supports working-tree review, branch review, and `--base <ref>`.
 - It does not support `--scope staged` or `--scope unstaged`.
-- Unlike `/codex:review`, it can still take extra focus text after the flags.
+- Unlike `/codex-jj:review`, it can still take extra focus text after the flags.
 
 Foreground flow:
 - Run:
@@ -63,4 +67,4 @@ Bash({
 })
 ```
 - Do not call `BashOutput` or wait for completion in this turn.
-- After launching the command, tell the user: "Codex adversarial review started in the background. Check `/codex:status` for progress."
+- After launching the command, tell the user: "Codex adversarial review started in the background. Check `/codex-jj:status` for progress."

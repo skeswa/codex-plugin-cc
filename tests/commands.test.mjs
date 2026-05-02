@@ -27,16 +27,12 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   assert.match(source, /description:\s*"Codex review"/);
   assert.match(source, /Do not call `BashOutput`/);
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
-  assert.match(source, /git status --short --untracked-files=all/);
-  assert.match(source, /git diff --shortstat/);
-  assert.match(source, /Treat untracked files or directories as reviewable work/i);
-  assert.match(source, /Recommend waiting only when the review is clearly tiny, roughly 1-2 files total/i);
-  assert.match(source, /In every other case, including unclear size, recommend background/i);
-  assert.match(source, /The companion script parses `--wait` and `--background`/i);
-  assert.match(source, /Claude Code's `Bash\(..., run_in_background: true\)` is what actually detaches the run/i);
-  assert.match(source, /When in doubt, run the review/i);
+  assert.match(source, /review-preflight "\$ARGUMENTS"/);
+  assert.match(source, /recommendation:/);
   assert.match(source, /\(Recommended\)/);
-  assert.match(source, /does not support staged-only review, unstaged-only review, or extra focus text/i);
+  assert.match(source, /Jujutsu repo/);
+  assert.match(source, /closest first-parent ancestor bookmark/);
+  assert.match(source, /Bash\(jj:\*\)/);
 });
 
 test("adversarial review command uses AskUserQuestion and background Bash while staying review-only", () => {
@@ -55,19 +51,12 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /description:\s*"Codex adversarial review"/);
   assert.match(source, /Do not call `BashOutput`/);
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
-  assert.match(source, /git status --short --untracked-files=all/);
-  assert.match(source, /git diff --shortstat/);
-  assert.match(source, /Treat untracked files or directories as reviewable work/i);
-  assert.match(source, /Recommend waiting only when the scoped review is clearly tiny, roughly 1-2 files total/i);
-  assert.match(source, /In every other case, including unclear size, recommend background/i);
-  assert.match(source, /The companion script parses `--wait` and `--background`/i);
-  assert.match(source, /Claude Code's `Bash\(..., run_in_background: true\)` is what actually detaches the run/i);
-  assert.match(source, /When in doubt, run the review/i);
+  assert.match(source, /review-preflight "\$ARGUMENTS"/);
+  assert.match(source, /recommendation:/);
   assert.match(source, /\(Recommended\)/);
-  assert.match(source, /uses the same review target selection as `\/codex:review`/i);
-  assert.match(source, /supports working-tree review, branch review, and `--base <ref>`/i);
-  assert.match(source, /does not support `--scope staged` or `--scope unstaged`/i);
-  assert.match(source, /can still take extra focus text after the flags/i);
+  assert.match(source, /Jujutsu repo/);
+  assert.match(source, /closest first-parent ancestor bookmark/);
+  assert.match(source, /Bash\(jj:\*\)/);
 });
 
 test("continue is not exposed as a user-facing command", () => {
@@ -91,14 +80,14 @@ test("rescue command absorbs continue semantics", () => {
 
   assert.match(rescue, /The final user-visible response must be Codex's output verbatim/i);
   assert.match(rescue, /allowed-tools:\s*Bash\(node:\*\),\s*AskUserQuestion,\s*Agent/);
-  // Regression for #234: `Skill(codex:rescue)` from the main agent recursed
+  // Regression for #234: `Skill(codex-jj:rescue)` from the main agent recursed
   // because rescue.md named the routing with ambiguous prose ("Route this
-  // request to the `codex:codex-rescue` subagent") while running under
+  // request to the `codex-jj:codex-rescue` subagent") while running under
   // `context: fork` — forked general-purpose subagents do not expose the
   // `Agent` tool, so the fork fell back to `Skill` and re-entered this
   // command. Pin the explicit transport and the inline (no-fork) execution.
-  assert.match(rescue, /subagent_type: "codex:codex-rescue"/);
-  assert.match(rescue, /do not call `Skill\(codex:codex-rescue\)`/i);
+  assert.match(rescue, /subagent_type: "codex-jj:codex-rescue"/);
+  assert.match(rescue, /do not call `Skill\(codex-jj:codex-rescue\)`/i);
   assert.doesNotMatch(rescue, /^context:\s*fork\b/m);
   assert.match(rescue, /--background\|--wait/);
   assert.match(rescue, /--resume\|--fresh/);
@@ -108,7 +97,7 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(rescue, /AskUserQuestion/);
   assert.match(rescue, /Continue current Codex thread/);
   assert.match(rescue, /Start a new Codex thread/);
-  assert.match(rescue, /run the `codex:codex-rescue` subagent in the background/i);
+  assert.match(rescue, /run the `codex-jj:codex-rescue` subagent in the background/i);
   assert.match(rescue, /default to foreground/i);
   assert.match(rescue, /Do not forward them to `task`/i);
   assert.match(rescue, /`--model` and `--effort` are runtime-selection flags/i);
@@ -152,20 +141,20 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(runtimeSkill, /`--effort`: accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`/i);
   assert.match(runtimeSkill, /Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own/i);
   assert.match(runtimeSkill, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
-  assert.match(readme, /`codex:codex-rescue` subagent/i);
+  assert.match(readme, /`codex-jj:codex-rescue` subagent/i);
   assert.match(readme, /if you do not pass `--model` or `--effort`, Codex chooses its own defaults/i);
   assert.match(readme, /--model gpt-5\.4-mini --effort medium/i);
   assert.match(readme, /`spark`, the plugin maps that to `gpt-5\.3-codex-spark`/i);
   assert.match(readme, /continue a previous Codex task/i);
-  assert.match(readme, /### `\/codex:setup`/);
-  assert.match(readme, /### `\/codex:review`/);
-  assert.match(readme, /### `\/codex:adversarial-review`/);
-  assert.match(readme, /uses the same review target selection as `\/codex:review`/i);
+  assert.match(readme, /### `\/codex-jj:setup`/);
+  assert.match(readme, /### `\/codex-jj:review`/);
+  assert.match(readme, /### `\/codex-jj:adversarial-review`/);
+  assert.match(readme, /uses the same review target selection as `\/codex-jj:review`/i);
   assert.match(readme, /--base main challenge whether this was the right caching and retry design/);
-  assert.match(readme, /### `\/codex:rescue`/);
-  assert.match(readme, /### `\/codex:status`/);
-  assert.match(readme, /### `\/codex:result`/);
-  assert.match(readme, /### `\/codex:cancel`/);
+  assert.match(readme, /### `\/codex-jj:rescue`/);
+  assert.match(readme, /### `\/codex-jj:status`/);
+  assert.match(readme, /### `\/codex-jj:result`/);
+  assert.match(readme, /### `\/codex-jj:cancel`/);
 });
 
 test("result and cancel commands are exposed as deterministic runtime entrypoints", () => {
@@ -214,6 +203,6 @@ test("setup command can offer Codex install and still points users to codex logi
   assert.match(setup, /codex-companion\.mjs" setup --json \$ARGUMENTS/);
   assert.match(readme, /!codex login/);
   assert.match(readme, /offer to install Codex for you/i);
-  assert.match(readme, /\/codex:setup --enable-review-gate/);
-  assert.match(readme, /\/codex:setup --disable-review-gate/);
+  assert.match(readme, /\/codex-jj:setup --enable-review-gate/);
+  assert.match(readme, /\/codex-jj:setup --disable-review-gate/);
 });

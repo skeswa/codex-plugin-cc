@@ -1,53 +1,140 @@
-# Codex plugin for Claude Code
+# Codex plugin for Claude Code (Jujutsu-first fork)
 
 Use Codex from inside Claude Code for code reviews or to delegate tasks to Codex.
 
-This plugin is for Claude Code users who want an easy way to start using Codex from the workflow
-they already have.
+This is a fork of [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) adapted to be **Jujutsu-first** while keeping full Git support. In a [jj](https://github.com/jj-vcs/jj) repo, `/codex-jj:review` and `/codex-jj:adversarial-review` default to "the chain of revisions since the closest first-parent ancestor bookmark of `@`" — your current chain of thought, not your whole branch.
 
 <video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
 
+## What this fork changes
+
+Compared to upstream, this fork:
+
+- **Adds a VCS dispatcher** that auto-detects whether `cwd` lives inside a `.jj/` or `.git/` repo (the nearest repo marker wins; jj wins only when `.jj/` and `.git/` are colocated) and routes review commands to the matching backend.
+- **Adds a Jujutsu backend** alongside the existing git backend. The jj backend implements the same surface (`ensureRepository`, `resolveReviewTarget`, `collectReviewContext`, etc.) using `jj` commands and emits diffs in `--git` format so the Codex review prompt is unchanged.
+- **Redefines `auto` scope for jj**: the default review target is the chain `heads(::first_parent(@) & bookmarks())..@` — i.e., everything since the closest first-parent ancestor bookmark of `@`. If `@` is itself bookmarked, the chain skips past it. With no ancestor bookmark, it falls back to `trunk()..@`.
+- **Repurposes `--scope working-tree` and `--scope branch` in jj mode**: working-tree means `@-..@` (just the working-copy commit's diff); branch means `trunk()..@`. `--base <revset>` accepts any jj revset.
+- **Adds a `review-preflight` companion subcommand** that returns `vcs / target_label / file_count / lines_added / lines_removed / recommendation`. The two review command markdowns now call this single VCS-agnostic helper instead of running git-specific shell commands inline.
+- **Treats jj workspaces as first-class** (`jj workspace add ...`). No extra configuration — each workspace has its own `@` and the plugin uses whichever one `cwd` lives in.
+
+Git review semantics match upstream: `git.mjs` is untouched, all existing git tests still pass.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User[User in Claude Code]
+    User -->|/codex-jj:review or /codex-jj:adversarial-review| CommandMd[review.md / adversarial-review.md]
+
+    CommandMd -->|node companion review-preflight| Preflight[review-preflight handler]
+    CommandMd -->|node companion review| ReviewRun[executeReviewRun]
+
+    Preflight --> VCS
+    ReviewRun --> VCS
+
+    subgraph Companion[plugins/codex/scripts]
+      Preflight
+      ReviewRun
+      VCS[lib/vcs.mjs<br/>dispatcher]
+      VCS -->|nearest .jj| JJ[lib/jj.mjs<br/>jj backend]
+      VCS -->|nearest .git| Git[lib/git.mjs<br/>git backend]
+    end
+
+    JJ -->|jj root / jj log -r revset / jj diff --git| JJBin[(jj CLI)]
+    Git -->|git rev-parse / git diff / git log| GitBin[(git CLI)]
+
+    ReviewRun -->|diff/log/status text| Codex[(Codex app server)]
+    Codex -->|review output| User
+```
+
+The dispatcher caches detection by `cwd`, so within a single command invocation we walk the filesystem at most once per directory. The jj backend exclusively uses revsets (`heads(...)`, `<base>..@`, `trunk()`, `@-`, `@`) so there are no special cases for detached HEADs, missing branches, or remote tracking — the revset language handles them uniformly.
+
 ## What You Get
 
-- `/codex:review` for a normal read-only Codex review
-- `/codex:adversarial-review` for a steerable challenge review
-- `/codex:rescue`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work and manage background jobs
+- `/codex-jj:review` for a normal read-only Codex review (jj: first-parent chain since last bookmark; git: working tree or branch)
+- `/codex-jj:adversarial-review` for a steerable challenge review (same scope semantics as `/codex-jj:review`)
+- `/codex-jj:rescue`, `/codex-jj:status`, `/codex-jj:result`, and `/codex-jj:cancel` to delegate work and manage background jobs (VCS-agnostic)
 
 ## Requirements
 
 - **ChatGPT subscription (incl. Free) or OpenAI API key.**
   - Usage will contribute to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
 - **Node.js 18.18 or later**
+- **Jujutsu** ([jj-vcs/jj](https://github.com/jj-vcs/jj)) or **Git**. The plugin auto-detects which one your repo uses; in a colocated `.jj/` + `.git/` repo it prefers jj.
+
+## VCS support
+
+Both Git and Jujutsu work out of the box. The plugin walks up from `cwd` and uses the nearest repo marker; if `.jj/` and `.git/` are in the same directory, it uses jj. The semantics of `--scope` differ slightly between the two:
+
+| Scope | Git | Jujutsu |
+|---|---|---|
+| `auto` (default) | dirty? working tree : diff vs default branch | **chain since closest first-parent ancestor bookmark of `@`** (skips past `@`'s own bookmark; falls back to `trunk()..@`) |
+| `working-tree` | staged + unstaged + untracked | `@-..@` (the working-copy commit's diff) |
+| `branch` | diff vs detected default branch | `trunk()..@` |
+| `--base <ref>` | git diff vs `<ref>` | `<ref>..@`, where `<ref>` is any valid jj revset |
+
+### Working in jj workspaces
+
+[`jj workspace add`](https://jj-vcs.github.io/jj/latest/working-copy/#workspaces) is fully supported — each workspace has its own `@`, and the plugin uses whichever workspace `cwd` lives in. No special configuration needed.
 
 ## Install
 
-Add the marketplace in Claude Code:
+This fork is meant to be installed from a local clone (not from a published marketplace). The repo ships its own `.claude-plugin/marketplace.json` so Claude Code can read it directly off disk.
+
+This fork installs as plugin `codex-jj`, so it does not replace or conflict with the upstream `codex` plugin. If both are installed, upstream commands remain under `/codex:*` and this fork's commands appear under `/codex-jj:*`.
+
+**Step 1 — clone the fork:**
 
 ```bash
-/plugin marketplace add openai/codex-plugin-cc
+git clone https://github.com/skeswa/codex-plugin-cc.git
+cd codex-plugin-cc
 ```
 
-Install the plugin:
+**Step 2 — register the local checkout as a Claude Code marketplace.** Use an absolute path. `pwd` works inside the cloned directory; otherwise pass the full path explicitly. In Claude Code:
 
-```bash
-/plugin install codex@openai-codex
+```
+/plugin marketplace add /absolute/path/to/codex-plugin-cc
 ```
 
-Reload plugins:
+The marketplace name is `codex-jj` (defined in `.claude-plugin/marketplace.json`).
 
-```bash
+**Step 3 — install the plugin from that marketplace:**
+
+```
+/plugin install codex-jj@codex-jj
+```
+
+**Step 4 — reload so the slash commands appear:**
+
+```
 /reload-plugins
 ```
 
-Then run:
+After this you should see `/codex-jj:review`, `/codex-jj:adversarial-review`, `/codex-jj:rescue`, etc., plus the `codex-jj:codex-rescue` subagent under `/agents`.
 
-```bash
-/codex:setup
+**Step 5 — verify Codex itself is ready:**
+
+```
+/codex-jj:setup
 ```
 
-`/codex:setup` will tell you whether Codex is ready. If Codex is missing and npm is available, it can offer to install Codex for you.
+`/codex-jj:setup` will tell you whether Codex is ready. If Codex is missing and npm is available, it can offer to install Codex for you.
 
-If you prefer to install Codex yourself, use:
+### Updating after you pull or edit the fork
+
+Claude Code copies the plugin to `~/.claude/plugins/cache/` at install time, so edits to your local checkout are not picked up automatically. After a `git pull` or local edits:
+
+```
+/plugin marketplace update codex-jj
+/plugin install codex-jj@codex-jj
+/reload-plugins
+```
+
+If you're iterating heavily, you can drop the `version` field from `.claude-plugin/marketplace.json` and `plugins/codex/.claude-plugin/plugin.json` — Claude Code then treats every git commit as a new version and refreshes on `marketplace update`.
+
+Reference: [Claude Code plugin marketplaces docs](https://code.claude.com/docs/en/plugin-marketplaces).
+
+If you prefer to install the Codex CLI yourself instead of letting `/codex-jj:setup` do it:
 
 ```bash
 npm install -g @openai/codex
@@ -59,22 +146,17 @@ If Codex is installed but not logged in yet, run:
 !codex login
 ```
 
-After install, you should see:
-
-- the slash commands listed below
-- the `codex:codex-rescue` subagent in `/agents`
-
-One simple first run is:
+A simple first run is:
 
 ```bash
-/codex:review --background
-/codex:status
-/codex:result
+/codex-jj:review --background
+/codex-jj:status
+/codex-jj:result
 ```
 
 ## Usage
 
-### `/codex:review`
+### `/codex-jj:review`
 
 Runs a normal Codex review on your current work. It gives you the same quality of code review as running `/review` inside Codex directly.
 
@@ -83,29 +165,31 @@ Runs a normal Codex review on your current work. It gives you the same quality o
 
 Use it when you want:
 
-- a review of your current uncommitted changes
-- a review of your branch compared to a base branch like `main`
+- a review of your current first-parent chain of revisions in jj (everything since your last bookmark on that chain)
+- a review of your branch compared to a base branch like `main` in git
+- a review of just the working-copy commit (`--scope working-tree`)
 
-Use `--base <ref>` for branch review. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
+Use `--base <ref>` to override the comparison base in either VCS. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/codex-jj:adversarial-review`](#codex-jjadversarial-review) when you want to challenge a specific decision or risk area. See [VCS support](#vcs-support) for the full scope semantics.
 
 Examples:
 
 ```bash
-/codex:review
-/codex:review --base main
-/codex:review --background
+/codex-jj:review                          # jj: first-parent chain since last bookmark | git: working tree or branch
+/codex-jj:review --base main              # diff against main
+/codex-jj:review --scope working-tree     # jj: @-..@ | git: uncommitted changes
+/codex-jj:review --background
 ```
 
-This command is read-only and will not perform any changes. When run in the background you can use [`/codex:status`](#codexstatus) to check on the progress and [`/codex:cancel`](#codexcancel) to cancel the ongoing task.
+This command is read-only and will not perform any changes. When run in the background you can use [`/codex-jj:status`](#codex-jjstatus) to check on the progress and [`/codex-jj:cancel`](#codex-jjcancel) to cancel the ongoing task.
 
-### `/codex:adversarial-review`
+### `/codex-jj:adversarial-review`
 
 Runs a **steerable** review that questions the chosen implementation and design.
 
 It can be used to pressure-test assumptions, tradeoffs, failure modes, and whether a different approach would have been safer or simpler.
 
-It uses the same review target selection as `/codex:review`, including `--base <ref>` for branch review.
-It also supports `--wait` and `--background`. Unlike `/codex:review`, it can take extra focus text after the flags.
+It uses the same review target selection as `/codex-jj:review`, including `--base <ref>` for branch review.
+It also supports `--wait` and `--background`. Unlike `/codex-jj:review`, it can take extra focus text after the flags.
 
 Use it when you want:
 
@@ -116,16 +200,16 @@ Use it when you want:
 Examples:
 
 ```bash
-/codex:adversarial-review
-/codex:adversarial-review --base main challenge whether this was the right caching and retry design
-/codex:adversarial-review --background look for race conditions and question the chosen approach
+/codex-jj:adversarial-review
+/codex-jj:adversarial-review --base main challenge whether this was the right caching and retry design
+/codex-jj:adversarial-review --background look for race conditions and question the chosen approach
 ```
 
 This command is read-only. It does not fix code.
 
-### `/codex:rescue`
+### `/codex-jj:rescue`
 
-Hands a task to Codex through the `codex:codex-rescue` subagent.
+Hands a task to Codex through the `codex-jj:codex-rescue` subagent.
 
 Use it when you want Codex to:
 
@@ -142,12 +226,12 @@ It supports `--background`, `--wait`, `--resume`, and `--fresh`. If you omit `--
 Examples:
 
 ```bash
-/codex:rescue investigate why the tests started failing
-/codex:rescue fix the failing test with the smallest safe patch
-/codex:rescue --resume apply the top fix from the last run
-/codex:rescue --model gpt-5.4-mini --effort medium investigate the flaky integration test
-/codex:rescue --model spark fix the issue quickly
-/codex:rescue --background investigate the regression
+/codex-jj:rescue investigate why the tests started failing
+/codex-jj:rescue fix the failing test with the smallest safe patch
+/codex-jj:rescue --resume apply the top fix from the last run
+/codex-jj:rescue --model gpt-5.4-mini --effort medium investigate the flaky integration test
+/codex-jj:rescue --model spark fix the issue quickly
+/codex-jj:rescue --background investigate the regression
 ```
 
 You can also just ask for a task to be delegated to Codex:
@@ -162,15 +246,15 @@ Ask Codex to redesign the database connection to be more resilient.
 - if you say `spark`, the plugin maps that to `gpt-5.3-codex-spark`
 - follow-up rescue requests can continue the latest Codex task in the repo
 
-### `/codex:status`
+### `/codex-jj:status`
 
 Shows running and recent Codex jobs for the current repository.
 
 Examples:
 
 ```bash
-/codex:status
-/codex:status task-abc123
+/codex-jj:status
+/codex-jj:status task-abc123
 ```
 
 Use it to:
@@ -179,7 +263,7 @@ Use it to:
 - see the latest completed job
 - confirm whether a task is still running
 
-### `/codex:result`
+### `/codex-jj:result`
 
 Shows the final stored Codex output for a finished job.
 When available, it also includes the Codex session ID so you can reopen that run directly in Codex with `codex resume <session-id>`.
@@ -187,33 +271,33 @@ When available, it also includes the Codex session ID so you can reopen that run
 Examples:
 
 ```bash
-/codex:result
-/codex:result task-abc123
+/codex-jj:result
+/codex-jj:result task-abc123
 ```
 
-### `/codex:cancel`
+### `/codex-jj:cancel`
 
 Cancels an active background Codex job.
 
 Examples:
 
 ```bash
-/codex:cancel
-/codex:cancel task-abc123
+/codex-jj:cancel
+/codex-jj:cancel task-abc123
 ```
 
-### `/codex:setup`
+### `/codex-jj:setup`
 
 Checks whether Codex is installed and authenticated.
 If Codex is missing and npm is available, it can offer to install Codex for you.
 
-You can also use `/codex:setup` to manage the optional review gate.
+You can also use `/codex-jj:setup` to manage the optional review gate.
 
 #### Enabling review gate
 
 ```bash
-/codex:setup --enable-review-gate
-/codex:setup --disable-review-gate
+/codex-jj:setup --enable-review-gate
+/codex-jj:setup --disable-review-gate
 ```
 
 When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted Codex review based on Claude's response. If that review finds issues, the stop is blocked so Claude can address them first.
@@ -226,27 +310,27 @@ When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted
 ### Review Before Shipping
 
 ```bash
-/codex:review
+/codex-jj:review
 ```
 
 ### Hand A Problem To Codex
 
 ```bash
-/codex:rescue investigate why the build is failing in CI
+/codex-jj:rescue investigate why the build is failing in CI
 ```
 
 ### Start Something Long-Running
 
 ```bash
-/codex:adversarial-review --background
-/codex:rescue --background investigate the flaky test
+/codex-jj:adversarial-review --background
+/codex-jj:rescue --background investigate the flaky test
 ```
 
 Then check in with:
 
 ```bash
-/codex:status
-/codex:result
+/codex-jj:status
+/codex-jj:result
 ```
 
 ## Codex Integration
@@ -272,7 +356,7 @@ Check out the Codex docs for more [configuration options](https://developers.ope
 
 ### Moving The Work Over To Codex
 
-Delegated tasks and any [stop gate](#what-does-the-review-gate-do) run can also be directly resumed inside Codex by running `codex resume` either with the specific session ID you received from running `/codex:result` or `/codex:status` or by selecting it from the list.
+Delegated tasks and any [stop gate](#what-does-the-review-gate-do) run can also be directly resumed inside Codex by running `codex resume` either with the specific session ID you received from running `/codex-jj:result` or `/codex-jj:status` or by selecting it from the list.
 
 This way you can review the Codex work or continue the work there.
 
@@ -282,7 +366,7 @@ This way you can review the Codex work or continue the work there.
 
 If you are already signed into Codex on this machine, that account should work immediately here too. This plugin uses your local Codex CLI authentication.
 
-If you only use Claude Code today and have not used Codex yet, you will also need to sign in to Codex with either a ChatGPT account or an API key. [Codex is available with your ChatGPT subscription](https://developers.openai.com/codex/pricing/), and [`codex login`](https://developers.openai.com/codex/cli/reference/#codex-login) supports both ChatGPT and API key sign-in. Run `/codex:setup` to check whether Codex is ready, and use `!codex login` if it is not.
+If you only use Claude Code today and have not used Codex yet, you will also need to sign in to Codex with either a ChatGPT account or an API key. [Codex is available with your ChatGPT subscription](https://developers.openai.com/codex/pricing/), and [`codex login`](https://developers.openai.com/codex/cli/reference/#codex-login) supports both ChatGPT and API key sign-in. Run `/codex-jj:setup` to check whether Codex is ready, and use `!codex login` if it is not.
 
 ### Does the plugin use a separate Codex runtime?
 

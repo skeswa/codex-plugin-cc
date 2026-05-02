@@ -21,7 +21,13 @@ import {
     runAppServerTurn
   } from "./lib/codex.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
-import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
+import {
+  collectReviewContext,
+  detectVcs,
+  ensureRepository,
+  getReviewSizeStats,
+  resolveReviewTarget
+} from "./lib/vcs.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
@@ -77,6 +83,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
+      "  node scripts/codex-companion.mjs review-preflight [--base <ref>] [--scope <auto|working-tree|branch>] [--json]",
       "  node scripts/codex-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
@@ -193,7 +200,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
     nextSteps.push("If browser login is blocked, retry with `!codex login --device-auth` or `!codex login --with-api-key`.");
   }
   if (!config.stopReviewGate) {
-    nextSteps.push("Optional: run `/codex:setup --enable-review-gate` to require a fresh review before stop.");
+    nextSteps.push("Optional: run `/codex-jj:setup --enable-review-gate` to require a fresh review before stop.");
   }
 
   return {
@@ -246,14 +253,27 @@ function buildAdversarialReviewPrompt(context, focusText) {
   });
 }
 
+function buildReviewPrompt(context) {
+  const template = loadPromptTemplate(ROOT_DIR, "review");
+  return interpolateTemplate(template, {
+    TARGET_LABEL: context.target.label,
+    REVIEW_COLLECTION_GUIDANCE: context.collectionGuidance,
+    REVIEW_INPUT: context.content
+  });
+}
+
 function ensureCodexAvailable(cwd) {
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
-    throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex:setup`.");
+    throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex-jj:setup`.");
   }
 }
 
 function buildNativeReviewTarget(target) {
+  if (target.vcsKind === "jj") {
+    return null;
+  }
+
   if (target.mode === "working-tree") {
     return { type: "uncommittedChanges" };
   }
@@ -265,19 +285,12 @@ function buildNativeReviewTarget(target) {
   return null;
 }
 
-function validateNativeReviewRequest(target, focusText) {
+function validateReviewFocus(focusText) {
   if (focusText.trim()) {
     throw new Error(
-      `\`/codex:review\` now maps directly to the built-in reviewer and does not support custom focus text. Retry with \`/codex:adversarial-review ${focusText.trim()}\` for focused review instructions.`
+      `\`/codex-jj:review\` does not support custom focus text. Retry with \`/codex-jj:adversarial-review ${focusText.trim()}\` for focused review instructions.`
     );
   }
-
-  const nativeTarget = buildNativeReviewTarget(target);
-  if (!nativeTarget) {
-    throw new Error("This `/codex:review` target is not supported by the built-in reviewer. Retry with `/codex:adversarial-review` for custom targeting.");
-  }
-
-  return nativeTarget;
 }
 
 function renderStatusPayload(report, asJson) {
@@ -337,7 +350,7 @@ async function resolveLatestTrackedTaskThread(cwd, options = {}) {
   const visibleJobs = filterJobsForCurrentClaudeSession(jobs);
   const activeTask = visibleJobs.find((job) => job.jobClass === "task" && (job.status === "queued" || job.status === "running"));
   if (activeTask) {
-    throw new Error(`Task ${activeTask.id} is still running. Use /codex:status before continuing it.`);
+    throw new Error(`Task ${activeTask.id} is still running. Use /codex-jj:status before continuing it.`);
   }
 
   const trackedTask = findLatestResumableTaskJob(visibleJobs);
@@ -354,7 +367,7 @@ async function resolveLatestTrackedTaskThread(cwd, options = {}) {
 
 async function executeReviewRun(request) {
   ensureCodexAvailable(request.cwd);
-  ensureGitRepository(request.cwd);
+  ensureRepository(request.cwd);
 
   const target = resolveReviewTarget(request.cwd, {
     base: request.base,
@@ -363,48 +376,54 @@ async function executeReviewRun(request) {
   const focusText = request.focusText?.trim() ?? "";
   const reviewName = request.reviewName ?? "Review";
   if (reviewName === "Review") {
-    const reviewTarget = validateNativeReviewRequest(target, focusText);
-    const result = await runAppServerReview(request.cwd, {
-      target: reviewTarget,
-      model: request.model,
-      onProgress: request.onProgress
-    });
-    const payload = {
-      review: reviewName,
-      target,
-      threadId: result.threadId,
-      sourceThreadId: result.sourceThreadId,
-      codex: {
-        status: result.status,
-        stderr: result.stderr,
-        stdout: result.reviewText,
-        reasoning: result.reasoningSummary
-      }
-    };
-    const rendered = renderNativeReviewResult(
-      {
-        status: result.status,
-        stdout: result.reviewText,
-        stderr: result.stderr
-      },
-      { reviewLabel: reviewName, targetLabel: target.label, reasoningSummary: result.reasoningSummary }
-    );
+    validateReviewFocus(focusText);
+    const reviewTarget = buildNativeReviewTarget(target);
+    if (reviewTarget) {
+      const result = await runAppServerReview(request.cwd, {
+        target: reviewTarget,
+        model: request.model,
+        onProgress: request.onProgress
+      });
+      const payload = {
+        review: reviewName,
+        target,
+        threadId: result.threadId,
+        sourceThreadId: result.sourceThreadId,
+        codex: {
+          status: result.status,
+          stderr: result.stderr,
+          stdout: result.reviewText,
+          reasoning: result.reasoningSummary
+        }
+      };
+      const rendered = renderNativeReviewResult(
+        {
+          status: result.status,
+          stdout: result.reviewText,
+          stderr: result.stderr
+        },
+        { reviewLabel: reviewName, targetLabel: target.label, reasoningSummary: result.reasoningSummary }
+      );
 
-    return {
-      exitStatus: result.status,
-      threadId: result.threadId,
-      turnId: result.turnId,
-      payload,
-      rendered,
-      summary: firstMeaningfulLine(result.reviewText, `${reviewName} completed.`),
-      jobTitle: `Codex ${reviewName}`,
-      jobClass: "review",
-      targetLabel: target.label
-    };
+      return {
+        exitStatus: result.status,
+        threadId: result.threadId,
+        turnId: result.turnId,
+        payload,
+        rendered,
+        summary: firstMeaningfulLine(result.reviewText, `${reviewName} completed.`),
+        jobTitle: `Codex ${reviewName}`,
+        jobClass: "review",
+        targetLabel: target.label
+      };
+    }
   }
 
   const context = collectReviewContext(request.cwd, target);
-  const prompt = buildAdversarialReviewPrompt(context, focusText);
+  const prompt =
+    reviewName === "Review"
+      ? buildReviewPrompt(context)
+      : buildAdversarialReviewPrompt(context, focusText);
   const result = await runAppServerTurn(context.repoRoot, {
     prompt,
     model: request.model,
@@ -551,7 +570,7 @@ function buildTaskRunMetadata({ prompt, resumeLast = false }) {
 }
 
 function renderQueuedTaskLaunch(payload) {
-  return `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress.\n`;
+  return `${payload.title} started in the background as ${payload.jobId}. Check /codex-jj:status ${payload.jobId} for progress.\n`;
 }
 
 function getJobKindLabel(kind, jobClass) {
@@ -679,6 +698,85 @@ function enqueueBackgroundTask(cwd, job, request) {
   };
 }
 
+function handleReviewPreflight(argv) {
+  const { options } = parseCommandInput(argv, {
+    valueOptions: ["base", "scope", "cwd"],
+    booleanOptions: ["json"]
+  });
+
+  const cwd = resolveCommandCwd(options);
+  const detection = detectVcs(cwd);
+  if (!detection) {
+    const message = "no VCS detected (no .jj or .git in any ancestor directory)";
+    if (options.json) {
+      console.log(JSON.stringify({ error: message }, null, 2));
+    } else {
+      console.log(`error: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  let target;
+  try {
+    target = resolveReviewTarget(cwd, {
+      base: options.base,
+      scope: options.scope
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (options.json) {
+      console.log(JSON.stringify({ vcs: detection.kind, error: message }, null, 2));
+    } else {
+      console.log(`vcs: ${detection.kind}`);
+      console.log(`error: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  let sizeStats;
+  try {
+    sizeStats = getReviewSizeStats(cwd, target);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (options.json) {
+      console.log(JSON.stringify({ vcs: detection.kind, error: message }, null, 2));
+    } else {
+      console.log(`vcs: ${detection.kind}`);
+      console.log(`error: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const recommendation = recommendReviewExecutionMode(sizeStats);
+  const payload = {
+    vcs: detection.kind,
+    target_label: target.label,
+    target_mode: target.mode,
+    file_count: sizeStats.fileCount,
+    lines_added: sizeStats.linesAdded,
+    lines_removed: sizeStats.linesRemoved,
+    recommendation
+  };
+  if (options.json) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  for (const [key, value] of Object.entries(payload)) {
+    console.log(`${key}: ${value}`);
+  }
+}
+
+function recommendReviewExecutionMode(sizeStats) {
+  const totalLines = (sizeStats.linesAdded ?? 0) + (sizeStats.linesRemoved ?? 0);
+  if (sizeStats.fileCount <= 2 && totalLines <= 80) {
+    return "wait";
+  }
+  return "background";
+}
+
 async function handleReviewCommand(argv, config) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["base", "scope", "model", "cwd"],
@@ -725,7 +823,7 @@ async function handleReviewCommand(argv, config) {
 async function handleReview(argv) {
   return handleReviewCommand(argv, {
     reviewName: "Review",
-    validateRequest: validateNativeReviewRequest
+    validateRequest: (_target, focusText) => validateReviewFocus(focusText)
   });
 }
 
@@ -996,6 +1094,9 @@ async function main() {
       await handleReviewCommand(argv, {
         reviewName: "Adversarial Review"
       });
+      break;
+    case "review-preflight":
+      handleReviewPreflight(argv);
       break;
     case "task":
       await handleTask(argv);

@@ -12,10 +12,20 @@ export function writeExecutable(filePath, source) {
   fs.writeFileSync(filePath, source, { encoding: "utf8", mode: 0o755 });
 }
 
+const HOST_INJECTED_ENV_VARS = ["CODEX_COMPANION_SESSION_ID"];
+
+function buildSanitizedEnv() {
+  const env = { ...process.env };
+  for (const key of HOST_INJECTED_ENV_VARS) {
+    delete env[key];
+  }
+  return env;
+}
+
 export function run(command, args, options = {}) {
   return spawnSync(command, args, {
     cwd: options.cwd,
-    env: options.env,
+    env: options.env ?? buildSanitizedEnv(),
     encoding: "utf8",
     input: options.input,
     shell: process.platform === "win32" && !path.isAbsolute(command),
@@ -29,4 +39,27 @@ export function initGitRepo(cwd) {
   run("git", ["config", "user.email", "tests@example.com"], { cwd });
   run("git", ["config", "commit.gpgsign", "false"], { cwd });
   run("git", ["config", "tag.gpgsign", "false"], { cwd });
+}
+
+export function jjAvailable() {
+  const result = run("jj", ["--version"]);
+  return result.status === 0;
+}
+
+export function initJjRepo(cwd) {
+  run("jj", ["git", "init", "."], { cwd });
+  run("jj", ["config", "set", "--repo", "user.name", "Codex Plugin Tests"], { cwd });
+  run("jj", ["config", "set", "--repo", "user.email", "tests@example.com"], { cwd });
+}
+
+export function jjDescribe(cwd, message) {
+  return run("jj", ["describe", "-m", message], { cwd });
+}
+
+export function jjNew(cwd, message) {
+  return run("jj", ["new", "-m", message], { cwd });
+}
+
+export function jjBookmarkCreate(cwd, name, revset) {
+  return run("jj", ["bookmark", "create", name, "-r", revset], { cwd });
 }
