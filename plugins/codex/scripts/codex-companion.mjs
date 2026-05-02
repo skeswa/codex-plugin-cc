@@ -21,7 +21,13 @@ import {
     runAppServerTurn
   } from "./lib/codex.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
-import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
+import {
+  collectReviewContext,
+  detectVcs,
+  ensureRepository,
+  getReviewSizeStats,
+  resolveReviewTarget
+} from "./lib/vcs.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
@@ -77,6 +83,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
+      "  node scripts/codex-companion.mjs review-preflight [--base <ref>] [--scope <auto|working-tree|branch>] [--json]",
       "  node scripts/codex-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
@@ -354,7 +361,7 @@ async function resolveLatestTrackedTaskThread(cwd, options = {}) {
 
 async function executeReviewRun(request) {
   ensureCodexAvailable(request.cwd);
-  ensureGitRepository(request.cwd);
+  ensureRepository(request.cwd);
 
   const target = resolveReviewTarget(request.cwd, {
     base: request.base,
@@ -679,6 +686,82 @@ function enqueueBackgroundTask(cwd, job, request) {
   };
 }
 
+function handleReviewPreflight(argv) {
+  const { options } = parseCommandInput(argv, {
+    valueOptions: ["base", "scope", "cwd"],
+    booleanOptions: ["json"]
+  });
+
+  const cwd = resolveCommandCwd(options);
+  const detection = detectVcs(cwd);
+  if (!detection) {
+    const message = "no VCS detected (no .jj or .git in any ancestor directory)";
+    if (options.json) {
+      console.log(JSON.stringify({ error: message }, null, 2));
+    } else {
+      console.log(`error: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  let target;
+  try {
+    target = resolveReviewTarget(cwd, {
+      base: options.base,
+      scope: options.scope
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (options.json) {
+      console.log(JSON.stringify({ vcs: detection.kind, error: message }, null, 2));
+    } else {
+      console.log(`vcs: ${detection.kind}`);
+      console.log(`error: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  let sizeStats = { fileCount: 0, linesAdded: 0, linesRemoved: 0 };
+  let sizeError = null;
+  try {
+    sizeStats = getReviewSizeStats(cwd, target);
+  } catch (error) {
+    sizeError = error instanceof Error ? error.message : String(error);
+  }
+
+  const recommendation = recommendReviewExecutionMode(sizeStats);
+  const payload = {
+    vcs: detection.kind,
+    target_label: target.label,
+    target_mode: target.mode,
+    file_count: sizeStats.fileCount,
+    lines_added: sizeStats.linesAdded,
+    lines_removed: sizeStats.linesRemoved,
+    recommendation
+  };
+  if (sizeError) {
+    payload.size_warning = sizeError;
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  for (const [key, value] of Object.entries(payload)) {
+    console.log(`${key}: ${value}`);
+  }
+}
+
+function recommendReviewExecutionMode(sizeStats) {
+  const totalLines = (sizeStats.linesAdded ?? 0) + (sizeStats.linesRemoved ?? 0);
+  if (sizeStats.fileCount <= 2 && totalLines <= 80) {
+    return "wait";
+  }
+  return "background";
+}
+
 async function handleReviewCommand(argv, config) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["base", "scope", "model", "cwd"],
@@ -996,6 +1079,9 @@ async function main() {
       await handleReviewCommand(argv, {
         reviewName: "Adversarial Review"
       });
+      break;
+    case "review-preflight":
+      handleReviewPreflight(argv);
       break;
     case "task":
       await handleTask(argv);

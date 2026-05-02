@@ -1,9 +1,8 @@
-# Codex plugin for Claude Code
+# Codex plugin for Claude Code (Jujutsu-first fork)
 
 Use Codex from inside Claude Code for code reviews or to delegate tasks to Codex.
 
-This plugin is for Claude Code users who want an easy way to start using Codex from the workflow
-they already have.
+This is a fork of [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) adapted to be **Jujutsu-first** while keeping full Git support. In a [jj](https://github.com/jj-vcs/jj) repo, `/codex:review` and `/codex:adversarial-review` default to "the chain of revisions since the closest ancestor bookmark of `@`" — your current chain of thought, not your whole branch.
 
 <video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
 
@@ -18,6 +17,22 @@ they already have.
 - **ChatGPT subscription (incl. Free) or OpenAI API key.**
   - Usage will contribute to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
 - **Node.js 18.18 or later**
+- **Jujutsu** ([jj-vcs/jj](https://github.com/jj-vcs/jj)) or **Git**. The plugin auto-detects which one your repo uses; in a colocated `.jj/` + `.git/` repo it prefers jj.
+
+## VCS support
+
+Both Git and Jujutsu work out of the box. The plugin walks up from `cwd` looking for `.jj/` first, then `.git/`. The semantics of `--scope` differ slightly between the two:
+
+| Scope | Git | Jujutsu |
+|---|---|---|
+| `auto` (default) | dirty? working tree : diff vs default branch | **chain since closest ancestor bookmark of `@`** (skips past `@`'s own bookmark; falls back to `trunk()..@`) |
+| `working-tree` | staged + unstaged + untracked | `@-..@` (the working-copy commit's diff) |
+| `branch` | diff vs detected default branch | `trunk()..@` |
+| `--base <ref>` | git diff vs `<ref>` | `<ref>..@`, where `<ref>` is any valid jj revset |
+
+### Working in jj workspaces
+
+[`jj workspace add`](https://jj-vcs.github.io/jj/latest/working-copy/#workspaces) is fully supported — each workspace has its own `@`, and the plugin uses whichever workspace `cwd` lives in. No special configuration needed.
 
 ## Install
 
@@ -83,16 +98,18 @@ Runs a normal Codex review on your current work. It gives you the same quality o
 
 Use it when you want:
 
-- a review of your current uncommitted changes
-- a review of your branch compared to a base branch like `main`
+- a review of your current chain of revisions in jj (everything since your last bookmark)
+- a review of your branch compared to a base branch like `main` in git
+- a review of just the working-copy commit (`--scope working-tree`)
 
-Use `--base <ref>` for branch review. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
+Use `--base <ref>` to override the comparison base in either VCS. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area. See [VCS support](#vcs-support) for the full scope semantics.
 
 Examples:
 
 ```bash
-/codex:review
-/codex:review --base main
+/codex:review                          # jj: chain since last bookmark | git: working tree or branch
+/codex:review --base main              # diff against main
+/codex:review --scope working-tree     # jj: @-..@ | git: uncommitted changes
 /codex:review --background
 ```
 

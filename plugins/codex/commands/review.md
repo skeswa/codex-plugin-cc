@@ -1,14 +1,19 @@
 ---
-description: Run a Codex code review against local git state
+description: Run a Codex code review against the current jj chain (or git diff)
 argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(jj:*), AskUserQuestion
 ---
 
 Run a Codex review through the shared built-in reviewer.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
+
+VCS scope:
+- In a Jujutsu repo (default), the review covers the chain of revisions since the closest ancestor bookmark of `@`. If `@` itself is on a bookmark, the chain stops at the previous bookmark. With no ancestor bookmark, falls back to `trunk()..@`.
+- In a Git repo, the review covers the working tree if it is dirty, otherwise the diff against the detected default branch.
+- `--base <ref>` overrides in either VCS. `--scope working-tree` means uncommitted changes (git) or `@-..@` (jj). `--scope branch` means default-branch diff (git) or `trunk()..@` (jj).
 
 Core constraint:
 - This command is review-only.
@@ -18,16 +23,15 @@ Core constraint:
 Execution mode rules:
 - If the raw arguments include `--wait`, do not ask. Run the review in the foreground.
 - If the raw arguments include `--background`, do not ask. Run the review in a Claude background task.
-- Otherwise, estimate the review size before asking:
-  - For working-tree review, start with `git status --short --untracked-files=all`.
-  - For working-tree review, also inspect both `git diff --shortstat --cached` and `git diff --shortstat`.
-  - For base-branch review, use `git diff --shortstat <base>...HEAD`.
-  - Treat untracked files or directories as reviewable work even when `git diff --shortstat` is empty.
-  - Only conclude there is nothing to review when the relevant working-tree status is empty or the explicit branch diff is empty.
-  - Recommend waiting only when the review is clearly tiny, roughly 1-2 files total and no sign of a broader directory-sized change.
-  - In every other case, including unclear size, recommend background.
-  - When in doubt, run the review instead of declaring that there is nothing to review.
-- Then use `AskUserQuestion` exactly once with two options, putting the recommended option first and suffixing its label with `(Recommended)`:
+- Otherwise, estimate the review size with a single command:
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review-preflight $ARGUMENTS
+  ```
+  - Read its `recommendation:` line (`wait` or `background`) and use it as the default.
+  - If `recommendation: wait`, suffix `Wait for results` with `(Recommended)`.
+  - If `recommendation: background`, suffix `Run in background` with `(Recommended)`.
+  - If preflight reports an error (e.g., empty chain), surface that to the user instead of running the review.
+- Then use `AskUserQuestion` exactly once with two options, putting the recommended option first:
   - `Wait for results`
   - `Run in background`
 

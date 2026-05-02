@@ -30,3 +30,26 @@ export function initGitRepo(cwd) {
   run("git", ["config", "commit.gpgsign", "false"], { cwd });
   run("git", ["config", "tag.gpgsign", "false"], { cwd });
 }
+
+export function jjAvailable() {
+  const result = run("jj", ["--version"]);
+  return result.status === 0;
+}
+
+export function initJjRepo(cwd) {
+  run("jj", ["git", "init", "."], { cwd });
+  run("jj", ["config", "set", "--repo", "user.name", "Codex Plugin Tests"], { cwd });
+  run("jj", ["config", "set", "--repo", "user.email", "tests@example.com"], { cwd });
+}
+
+export function jjDescribe(cwd, message) {
+  return run("jj", ["describe", "-m", message], { cwd });
+}
+
+export function jjNew(cwd, message) {
+  return run("jj", ["new", "-m", message], { cwd });
+}
+
+export function jjBookmarkCreate(cwd, name, revset) {
+  return run("jj", ["bookmark", "create", name, "-r", revset], { cwd });
+}
