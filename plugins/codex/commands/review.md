@@ -5,7 +5,7 @@ disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(jj:*), AskUserQuestion
 ---
 
-Run a Codex review through the shared built-in reviewer.
+Run a Codex review through the shared runtime.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
@@ -25,7 +25,7 @@ Execution mode rules:
 - If the raw arguments include `--background`, do not ask. Run the review in a Claude background task.
 - Otherwise, estimate the review size with a single command:
   ```bash
-  node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review-preflight $ARGUMENTS
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review-preflight "$ARGUMENTS"
   ```
   - Read its `recommendation:` line (`wait` or `background`) and use it as the default.
   - If `recommendation: wait`, suffix `Wait for results` with `(Recommended)`.
@@ -40,7 +40,7 @@ Argument handling:
 - Do not strip `--wait` or `--background` yourself.
 - Do not add extra review instructions or rewrite the user's intent.
 - The companion script parses `--wait` and `--background`, but Claude Code's `Bash(..., run_in_background: true)` is what actually detaches the run.
-- `/codex:review` is native-review only. It does not support staged-only review, unstaged-only review, or extra focus text.
+- `/codex:review` uses the native built-in reviewer for Git targets and collected repository context for jj targets. It does not support staged-only review, unstaged-only review, or extra focus text.
 - If the user needs custom review instructions or more adversarial framing, they should use `/codex:adversarial-review`.
 
 Foreground flow:

@@ -28,7 +28,7 @@ Execution mode rules:
 - If the raw arguments include `--background`, do not ask. Run in a Claude background task.
 - Otherwise, estimate the review size with a single command:
   ```bash
-  node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review-preflight $ARGUMENTS
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review-preflight "$ARGUMENTS"
   ```
   - Read its `recommendation:` line (`wait` or `background`) and use it as the default.
   - If `recommendation: wait`, suffix `Wait for results` with `(Recommended)`.

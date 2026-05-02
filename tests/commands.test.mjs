@@ -27,7 +27,7 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   assert.match(source, /description:\s*"Codex review"/);
   assert.match(source, /Do not call `BashOutput`/);
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
-  assert.match(source, /review-preflight \$ARGUMENTS/);
+  assert.match(source, /review-preflight "\$ARGUMENTS"/);
   assert.match(source, /recommendation:/);
   assert.match(source, /\(Recommended\)/);
   assert.match(source, /Jujutsu repo/);
@@ -51,7 +51,7 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /description:\s*"Codex adversarial review"/);
   assert.match(source, /Do not call `BashOutput`/);
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
-  assert.match(source, /review-preflight \$ARGUMENTS/);
+  assert.match(source, /review-preflight "\$ARGUMENTS"/);
   assert.match(source, /recommendation:/);
   assert.match(source, /\(Recommended\)/);
   assert.match(source, /Jujutsu repo/);

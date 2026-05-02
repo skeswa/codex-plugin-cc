@@ -52,6 +52,20 @@ test("detectVcs ascends from a subdirectory", () => {
   assert.equal(fs.realpathSync(detection.root), fs.realpathSync(root));
 });
 
+test("detectVcs prefers a nearer nested git repo over an ancestor jj repo", { skip: !jjAvailable() }, () => {
+  _resetDetectionCacheForTests();
+  const root = makeTempDir();
+  initJjRepo(root);
+  const nested = path.join(root, "nested-git");
+  fs.mkdirSync(nested);
+  initGitRepo(nested);
+
+  const detection = detectVcs(nested);
+
+  assert.equal(detection.kind, "git");
+  assert.equal(fs.realpathSync(detection.root), fs.realpathSync(nested));
+});
+
 test("ensureRepository throws a clear error in a bare directory", () => {
   _resetDetectionCacheForTests();
   const cwd = makeTempDir();

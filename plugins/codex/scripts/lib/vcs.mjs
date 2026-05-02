@@ -7,16 +7,25 @@ import { runCommand } from "./process.mjs";
 
 const detectionCache = new Map();
 
-function findAncestorWith(startDir, marker) {
+function markerExists(dir, marker) {
+  try {
+    fs.statSync(path.join(dir, marker));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findNearestRepository(startDir) {
   let current = path.resolve(startDir);
   while (true) {
-    const candidate = path.join(current, marker);
-    try {
-      if (fs.statSync(candidate)) {
-        return current;
-      }
-    } catch {
-      // not present, ascend
+    const hasJj = markerExists(current, ".jj");
+    const hasGit = markerExists(current, ".git");
+    if (hasJj) {
+      return { kind: "jj", root: current };
+    }
+    if (hasGit) {
+      return { kind: "git", root: current };
     }
     const parent = path.dirname(current);
     if (parent === current) {
@@ -31,19 +40,11 @@ export function detectVcs(cwd) {
   if (detectionCache.has(key)) {
     return detectionCache.get(key);
   }
-  const jjRoot = findAncestorWith(key, ".jj");
-  if (jjRoot) {
-    const result = { kind: "jj", root: jjRoot };
+  const result = findNearestRepository(key);
+  if (result) {
     detectionCache.set(key, result);
-    return result;
   }
-  const gitRoot = findAncestorWith(key, ".git");
-  if (gitRoot) {
-    const result = { kind: "git", root: gitRoot };
-    detectionCache.set(key, result);
-    return result;
-  }
-  return null;
+  return result;
 }
 
 function requireDetection(cwd) {

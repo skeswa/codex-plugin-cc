@@ -6,7 +6,16 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
+import {
+  initGitRepo,
+  initJjRepo,
+  jjAvailable,
+  jjBookmarkCreate,
+  jjDescribe,
+  jjNew,
+  makeTempDir,
+  run
+} from "./helpers.mjs";
 import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
@@ -230,6 +239,33 @@ test("review accepts the quoted raw argument style for built-in base-branch revi
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Reviewed changes against main/);
   assert.match(result.stdout, /No material issues found/);
+});
+
+test("review uses structured context fallback for jj chain targets", { skip: !jjAvailable() }, () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initJjRepo(repo);
+  fs.mkdirSync(path.join(repo, "src"));
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "export const value = 1;\n");
+  jjDescribe(repo, "init");
+  jjBookmarkCreate(repo, "checkpoint", "@");
+  jjNew(repo, "change");
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "export const value = 2;\n");
+
+  const result = run("node", [SCRIPT, "review"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /# Codex Review/);
+  assert.match(result.stdout, /Target: chain since/);
+  assert.match(result.stdout, /No material findings/);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.match(state.lastTurnStart.prompt, /software code review/);
+  assert.match(state.lastTurnStart.prompt, /read-only jj commands|primary evidence/i);
+  assert.doesNotMatch(state.lastTurnStart.prompt, /adversarial software review/);
 });
 
 test("adversarial review renders structured findings over app-server turn/start", () => {
@@ -833,7 +869,7 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
 });
 
-test("review rejects focus text because it is native-review only", () => {
+test("review rejects focus text", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
@@ -853,7 +889,7 @@ test("review rejects focus text because it is native-review only", () => {
   assert.match(result.stderr, /\/codex:adversarial-review focus on auth/i);
 });
 
-test("review rejects staged-only scope because it is native-review only", () => {
+test("review rejects staged-only scope", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
