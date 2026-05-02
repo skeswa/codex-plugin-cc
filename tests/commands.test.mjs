@@ -31,7 +31,7 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   assert.match(source, /recommendation:/);
   assert.match(source, /\(Recommended\)/);
   assert.match(source, /Jujutsu repo/);
-  assert.match(source, /closest ancestor bookmark/);
+  assert.match(source, /closest first-parent ancestor bookmark/);
   assert.match(source, /Bash\(jj:\*\)/);
 });
 
@@ -55,7 +55,7 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /recommendation:/);
   assert.match(source, /\(Recommended\)/);
   assert.match(source, /Jujutsu repo/);
-  assert.match(source, /closest ancestor bookmark/);
+  assert.match(source, /closest first-parent ancestor bookmark/);
   assert.match(source, /Bash\(jj:\*\)/);
 });
 

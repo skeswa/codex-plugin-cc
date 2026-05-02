@@ -2,7 +2,7 @@
 
 Use Codex from inside Claude Code for code reviews or to delegate tasks to Codex.
 
-This is a fork of [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) adapted to be **Jujutsu-first** while keeping full Git support. In a [jj](https://github.com/jj-vcs/jj) repo, `/codex-jj:review` and `/codex-jj:adversarial-review` default to "the chain of revisions since the closest ancestor bookmark of `@`" — your current chain of thought, not your whole branch.
+This is a fork of [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) adapted to be **Jujutsu-first** while keeping full Git support. In a [jj](https://github.com/jj-vcs/jj) repo, `/codex-jj:review` and `/codex-jj:adversarial-review` default to "the chain of revisions since the closest first-parent ancestor bookmark of `@`" — your current chain of thought, not your whole branch.
 
 <video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
 
@@ -12,7 +12,7 @@ Compared to upstream, this fork:
 
 - **Adds a VCS dispatcher** that auto-detects whether `cwd` lives inside a `.jj/` or `.git/` repo (the nearest repo marker wins; jj wins only when `.jj/` and `.git/` are colocated) and routes review commands to the matching backend.
 - **Adds a Jujutsu backend** alongside the existing git backend. The jj backend implements the same surface (`ensureRepository`, `resolveReviewTarget`, `collectReviewContext`, etc.) using `jj` commands and emits diffs in `--git` format so the Codex review prompt is unchanged.
-- **Redefines `auto` scope for jj**: the default review target is the chain `heads(::@- & bookmarks())..@` — i.e., everything since the closest ancestor bookmark of `@`. If `@` is itself bookmarked, the chain skips past it. With no ancestor bookmark, it falls back to `trunk()..@`.
+- **Redefines `auto` scope for jj**: the default review target is the chain `heads(::first_parent(@) & bookmarks())..@` — i.e., everything since the closest first-parent ancestor bookmark of `@`. If `@` is itself bookmarked, the chain skips past it. With no ancestor bookmark, it falls back to `trunk()..@`.
 - **Repurposes `--scope working-tree` and `--scope branch` in jj mode**: working-tree means `@-..@` (just the working-copy commit's diff); branch means `trunk()..@`. `--base <revset>` accepts any jj revset.
 - **Adds a `review-preflight` companion subcommand** that returns `vcs / target_label / file_count / lines_added / lines_removed / recommendation`. The two review command markdowns now call this single VCS-agnostic helper instead of running git-specific shell commands inline.
 - **Treats jj workspaces as first-class** (`jj workspace add ...`). No extra configuration — each workspace has its own `@` and the plugin uses whichever one `cwd` lives in.
@@ -51,7 +51,7 @@ The dispatcher caches detection by `cwd`, so within a single command invocation 
 
 ## What You Get
 
-- `/codex-jj:review` for a normal read-only Codex review (jj: chain since last bookmark; git: working tree or branch)
+- `/codex-jj:review` for a normal read-only Codex review (jj: first-parent chain since last bookmark; git: working tree or branch)
 - `/codex-jj:adversarial-review` for a steerable challenge review (same scope semantics as `/codex-jj:review`)
 - `/codex-jj:rescue`, `/codex-jj:status`, `/codex-jj:result`, and `/codex-jj:cancel` to delegate work and manage background jobs (VCS-agnostic)
 
@@ -68,7 +68,7 @@ Both Git and Jujutsu work out of the box. The plugin walks up from `cwd` and use
 
 | Scope | Git | Jujutsu |
 |---|---|---|
-| `auto` (default) | dirty? working tree : diff vs default branch | **chain since closest ancestor bookmark of `@`** (skips past `@`'s own bookmark; falls back to `trunk()..@`) |
+| `auto` (default) | dirty? working tree : diff vs default branch | **chain since closest first-parent ancestor bookmark of `@`** (skips past `@`'s own bookmark; falls back to `trunk()..@`) |
 | `working-tree` | staged + unstaged + untracked | `@-..@` (the working-copy commit's diff) |
 | `branch` | diff vs detected default branch | `trunk()..@` |
 | `--base <ref>` | git diff vs `<ref>` | `<ref>..@`, where `<ref>` is any valid jj revset |
@@ -165,7 +165,7 @@ Runs a normal Codex review on your current work. It gives you the same quality o
 
 Use it when you want:
 
-- a review of your current chain of revisions in jj (everything since your last bookmark)
+- a review of your current first-parent chain of revisions in jj (everything since your last bookmark on that chain)
 - a review of your branch compared to a base branch like `main` in git
 - a review of just the working-copy commit (`--scope working-tree`)
 
@@ -174,7 +174,7 @@ Use `--base <ref>` to override the comparison base in either VCS. It also suppor
 Examples:
 
 ```bash
-/codex-jj:review                          # jj: chain since last bookmark | git: working tree or branch
+/codex-jj:review                          # jj: first-parent chain since last bookmark | git: working tree or branch
 /codex-jj:review --base main              # diff against main
 /codex-jj:review --scope working-tree     # jj: @-..@ | git: uncommitted changes
 /codex-jj:review --background

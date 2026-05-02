@@ -735,12 +735,19 @@ function handleReviewPreflight(argv) {
     return;
   }
 
-  let sizeStats = { fileCount: 0, linesAdded: 0, linesRemoved: 0 };
-  let sizeError = null;
+  let sizeStats;
   try {
     sizeStats = getReviewSizeStats(cwd, target);
   } catch (error) {
-    sizeError = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    if (options.json) {
+      console.log(JSON.stringify({ vcs: detection.kind, error: message }, null, 2));
+    } else {
+      console.log(`vcs: ${detection.kind}`);
+      console.log(`error: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
   }
 
   const recommendation = recommendReviewExecutionMode(sizeStats);
@@ -753,10 +760,6 @@ function handleReviewPreflight(argv) {
     lines_removed: sizeStats.linesRemoved,
     recommendation
   };
-  if (sizeError) {
-    payload.size_warning = sizeError;
-  }
-
   if (options.json) {
     console.log(JSON.stringify(payload, null, 2));
     return;

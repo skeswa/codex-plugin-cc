@@ -268,6 +268,34 @@ test("review uses structured context fallback for jj chain targets", { skip: !jj
   assert.doesNotMatch(state.lastTurnStart.prompt, /adversarial software review/);
 });
 
+test("review-preflight fails instead of recommending wait when jj sizing fails", { skip: !jjAvailable() }, () => {
+  const repo = makeTempDir();
+  initJjRepo(repo);
+  fs.writeFileSync(path.join(repo, "base.txt"), "base\n");
+  jjDescribe(repo, "base");
+  jjBookmarkCreate(repo, "main", "@");
+
+  run("jj", ["new", "-m", "left", "main"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "left.txt"), "left\n");
+  jjBookmarkCreate(repo, "left", "@");
+
+  run("jj", ["new", "-m", "right", "main"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "right.txt"), "right\n");
+  jjBookmarkCreate(repo, "right", "@");
+
+  run("jj", ["new", "-m", "merge", "left", "right"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "merge.txt"), "merge\n");
+
+  const result = run("node", [SCRIPT, "review-preflight", "--base", "left | right"], {
+    cwd: repo
+  });
+
+  assert.equal(result.status > 0, true);
+  assert.match(result.stdout, /vcs: jj/);
+  assert.match(result.stdout, /error:/);
+  assert.doesNotMatch(result.stdout, /recommendation: wait/);
+});
+
 test("adversarial review renders structured findings over app-server turn/start", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();

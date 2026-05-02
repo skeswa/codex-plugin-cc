@@ -3,7 +3,7 @@ import { formatCommandFailure, runCommand, runCommandChecked } from "./process.m
 const MAX_INLINE_DIFF_FILES = 2;
 const MAX_INLINE_DIFF_BYTES = 256 * 1024;
 
-const CHAIN_REVSET = "heads(::@- & bookmarks())";
+const CHAIN_REVSET = "heads(::first_parent(@) & bookmarks())";
 const TRUNK_REVSET = "trunk()";
 const ROOT_REVSET = "root()";
 
@@ -113,7 +113,7 @@ function trunkIsRoot(cwd) {
 function chainBaseRevset(cwd) {
   const closest = resolveRevsetToCommit(cwd, CHAIN_REVSET);
   if (closest) {
-    return { revset: CHAIN_REVSET, commit: closest, source: "bookmark" };
+    return { revset: closest, commit: closest, source: "bookmark" };
   }
   if (!trunkIsRoot(cwd)) {
     const trunkCommit = resolveRevsetToCommit(cwd, TRUNK_REVSET);

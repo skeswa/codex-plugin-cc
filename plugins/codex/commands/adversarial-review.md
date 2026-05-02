@@ -13,7 +13,7 @@ Raw slash-command arguments:
 `$ARGUMENTS`
 
 VCS scope:
-- In a Jujutsu repo (default), the review covers the chain of revisions since the closest ancestor bookmark of `@`. If `@` itself is on a bookmark, the chain stops at the previous bookmark. With no ancestor bookmark, falls back to `trunk()..@`.
+- In a Jujutsu repo (default), the review covers the chain of revisions since the closest first-parent ancestor bookmark of `@`. If `@` itself is on a bookmark, the chain stops at the previous bookmark. With no ancestor bookmark, falls back to `trunk()..@`.
 - In a Git repo, the review covers the working tree if it is dirty, otherwise the diff against the detected default branch.
 - `--base <ref>` overrides in either VCS. `--scope working-tree` means uncommitted changes (git) or `@-..@` (jj). `--scope branch` means default-branch diff (git) or `trunk()..@` (jj).
 

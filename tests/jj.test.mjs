@@ -15,7 +15,8 @@ import {
   jjBookmarkCreate,
   jjDescribe,
   jjNew,
-  makeTempDir
+  makeTempDir,
+  run
 } from "./helpers.mjs";
 
 const skip = !jjAvailable();
@@ -29,7 +30,7 @@ test("ensureRepository rejects non-jj directories", { skip, todo: skipMessage },
   );
 });
 
-test("auto scope returns chain since closest ancestor bookmark", { skip, todo: skipMessage }, () => {
+test("auto scope returns chain since closest first-parent ancestor bookmark", { skip, todo: skipMessage }, () => {
   const cwd = makeTempDir();
   initJjRepo(cwd);
   fs.writeFileSync(path.join(cwd, "a.txt"), "v1\n");
@@ -62,6 +63,35 @@ test("@ on a bookmark skips past it to the previous bookmark", { skip, todo: ski
   assert.equal(target.mode, "chain");
   assert.match(target.label, /first-bookmark/);
   assert.doesNotMatch(target.label, /second-bookmark/);
+});
+
+test("auto scope uses the first-parent bookmarked chain base for merge commits", { skip, todo: skipMessage }, () => {
+  const cwd = makeTempDir();
+  initJjRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "base.txt"), "base\n");
+  jjDescribe(cwd, "base");
+  jjBookmarkCreate(cwd, "main", "@");
+
+  run("jj", ["new", "-m", "left", "main"], { cwd });
+  fs.writeFileSync(path.join(cwd, "left.txt"), "left\n");
+  jjBookmarkCreate(cwd, "left", "@");
+
+  run("jj", ["new", "-m", "right", "main"], { cwd });
+  fs.writeFileSync(path.join(cwd, "right.txt"), "right\n");
+  jjBookmarkCreate(cwd, "right", "@");
+
+  run("jj", ["new", "-m", "merge", "left", "right"], { cwd });
+  fs.writeFileSync(path.join(cwd, "merge.txt"), "merge\n");
+
+  const target = resolveReviewTarget(cwd, {});
+  const context = collectReviewContext(cwd, target);
+
+  assert.equal(target.mode, "chain");
+  assert.match(target.label, /left/);
+  assert.doesNotMatch(target.label, /right/);
+  assert.equal(target.baseRevset, target.baseCommit);
+  assert.match(context.content, /merge\.txt/);
+  assert.match(context.content, /right\.txt/);
 });
 
 test("falls back to trunk() when no ancestor bookmark exists", { skip, todo: skipMessage }, () => {
