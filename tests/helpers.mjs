@@ -14,6 +14,17 @@ export function writeExecutable(filePath, source) {
 
 const HOST_INJECTED_ENV_VARS = ["CODEX_COMPANION_SESSION_ID"];
 
+// Strip Claude Code's live-runtime env vars from the test process at module
+// load so spawned children and host helpers (e.g. resolveStateDir) agree on a
+// fresh state location instead of inheriting an active broker session.
+for (const key of [
+  "CLAUDE_PLUGIN_DATA",
+  "CODEX_COMPANION_APP_SERVER_ENDPOINT",
+  "CODEX_COMPANION_SESSION_ID"
+]) {
+  delete process.env[key];
+}
+
 function buildSanitizedEnv() {
   const env = { ...process.env };
   for (const key of HOST_INJECTED_ENV_VARS) {
