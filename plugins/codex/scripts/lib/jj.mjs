@@ -248,38 +248,77 @@ function formatSection(title, body) {
   return [`## ${title}`, "", body.trim() ? body.trim() : "(none)", ""].join("\n");
 }
 
-function listChangedFiles(cwd, fromRevset, toRevset) {
+// Resolve the most recent shared ancestor of base and tip. For linear chains
+// where tip descends from base, this equals base itself; for chains that have
+// merged upstream content (or branched off an older commit), it's the integration
+// point on the base side. Diffing from the merge-base means upstream-only commits
+// never appear as either additions or deletions in the chain diff.
+function chainMergeBase(cwd, target) {
+  if (target.mode !== "chain") {
+    return null;
+  }
+  if (target.__mergeBase != null) {
+    return target.__mergeBase;
+  }
   const result = jjChecked(cwd, [
-    "diff",
-    "--name-only",
-    "--from",
-    fromRevset,
-    "--to",
-    toRevset
+    "log",
+    "-r",
+    `heads(::(${target.baseRevset}) & ::(${target.tipRevset}))`,
+    "--no-graph",
+    "-T",
+    'commit_id ++ "\\n"'
   ]);
+  const lines = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length > 1) {
+    throw new Error(
+      `Chain base "${target.baseRevset}" has ${lines.length} merge bases with the tip. ` +
+        `Pass an unambiguous revset via --base.`
+    );
+  }
+  const value = lines[0] ?? target.baseRevset;
+  Object.defineProperty(target, "__mergeBase", {
+    value,
+    enumerable: false,
+    writable: false,
+    configurable: false
+  });
+  return value;
+}
+
+function jjDiffArgs(cwd, target, extra = []) {
+  if (target.mode !== "chain") {
+    return ["diff", ...extra, "--from", target.baseRevset, "--to", target.tipRevset];
+  }
+  const fromRevset = chainMergeBase(cwd, target);
+  return ["diff", ...extra, "--from", fromRevset, "--to", target.tipRevset];
+}
+
+function listChangedFiles(cwd, target) {
+  const result = jjChecked(cwd, jjDiffArgs(cwd, target, ["--name-only"]));
   return result.stdout.trim().split("\n").filter(Boolean);
 }
 
-function fullDiff(cwd, fromRevset, toRevset) {
-  return jjChecked(cwd, [
-    "diff",
-    "--git",
-    "--from",
-    fromRevset,
-    "--to",
-    toRevset
-  ]).stdout;
+function fullDiff(cwd, target) {
+  return jjChecked(cwd, jjDiffArgs(cwd, target, ["--git"])).stdout;
 }
 
-function diffStat(cwd, fromRevset, toRevset) {
-  return jjChecked(cwd, [
-    "diff",
-    "--stat",
-    "--from",
-    fromRevset,
-    "--to",
-    toRevset
-  ]).stdout.trim();
+function diffStat(cwd, target) {
+  return jjChecked(cwd, jjDiffArgs(cwd, target, ["--stat"])).stdout.trim();
+}
+
+function commitsBehind(cwd, target) {
+  if (target.mode !== "chain") {
+    return 0;
+  }
+  const result = jjChecked(cwd, [
+    "log",
+    "-r",
+    `${target.tipRevset}..${target.baseRevset}`,
+    "--no-graph",
+    "-T",
+    '"x\\n"'
+  ]);
+  return result.stdout.split("\n").filter(Boolean).length;
 }
 
 function chainLog(cwd, fromRevset, toRevset) {
@@ -300,21 +339,33 @@ function buildAdversarialCollectionGuidance(includeDiff) {
   return "The repository context below is a lightweight summary. Inspect the target diff yourself with read-only jj commands before finalizing findings.";
 }
 
+function buildBranchStateBody(branchBehind, baseRevset) {
+  const noun = branchBehind === 1 ? "commit" : "commits";
+  return [
+    `Tip is ${branchBehind} ${noun} behind the chain base (\`${baseRevset}\`).`,
+    "The diff below reflects only the chain's own changes; it does NOT include those upstream commits.",
+    "Do not interpret missing upstream content as deletions in the chain."
+  ].join(" ");
+}
+
 function collectChainContext(cwd, target, options = {}) {
   const fromRevset = target.baseRevset;
   const toRevset = target.tipRevset;
-  const changedFiles = listChangedFiles(cwd, fromRevset, toRevset);
+  const changedFiles = listChangedFiles(cwd, target);
   const log = chainLog(cwd, fromRevset, toRevset);
-  const stat = diffStat(cwd, fromRevset, toRevset);
+  const stat = diffStat(cwd, target);
+  const branchBehind = commitsBehind(cwd, target);
 
-  const parts = [
-    formatSection("Status", statusOutput(cwd)),
-    formatSection("Commit Log", log),
-    formatSection("Diff Stat", stat)
-  ];
+  const parts = [];
+  if (branchBehind > 0) {
+    parts.push(formatSection("Branch State", buildBranchStateBody(branchBehind, fromRevset)));
+  }
+  parts.push(formatSection("Status", statusOutput(cwd)));
+  parts.push(formatSection("Commit Log", log));
+  parts.push(formatSection("Diff Stat", stat));
 
   if (options.includeDiff !== false) {
-    parts.push(formatSection("Chain Diff", fullDiff(cwd, fromRevset, toRevset)));
+    parts.push(formatSection("Chain Diff", fullDiff(cwd, target)));
   } else {
     parts.push(formatSection("Changed Files", changedFiles.join("\n")));
   }
@@ -324,15 +375,14 @@ function collectChainContext(cwd, target, options = {}) {
     mode: target.mode,
     summary,
     content: parts.join("\n"),
-    changedFiles
+    changedFiles,
+    branchBehind
   };
 }
 
 function collectWorkingCopyContext(cwd, target, options = {}) {
-  const fromRevset = target.baseRevset;
-  const toRevset = target.tipRevset;
-  const changedFiles = listChangedFiles(cwd, fromRevset, toRevset);
-  const stat = diffStat(cwd, fromRevset, toRevset);
+  const changedFiles = listChangedFiles(cwd, target);
+  const stat = diffStat(cwd, target);
 
   const parts = [
     formatSection("Status", statusOutput(cwd)),
@@ -340,7 +390,7 @@ function collectWorkingCopyContext(cwd, target, options = {}) {
   ];
 
   if (options.includeDiff !== false) {
-    parts.push(formatSection("Working Copy Diff", fullDiff(cwd, fromRevset, toRevset)));
+    parts.push(formatSection("Working Copy Diff", fullDiff(cwd, target)));
   } else {
     parts.push(formatSection("Changed Files", changedFiles.join("\n")));
   }
@@ -360,12 +410,10 @@ export function collectReviewContext(cwd, target, options = {}) {
   const maxInlineFiles = normalizeMaxInlineFiles(options.maxInlineFiles);
   const maxInlineDiffBytes = normalizeMaxInlineDiffBytes(options.maxInlineDiffBytes);
 
-  const fromRevset = target.baseRevset;
-  const toRevset = target.tipRevset;
-  const changedFiles = listChangedFiles(repoRoot, fromRevset, toRevset);
+  const changedFiles = listChangedFiles(repoRoot, target);
   const diffBytes = measureJjOutputBytes(
     repoRoot,
-    ["diff", "--git", "--from", fromRevset, "--to", toRevset],
+    jjDiffArgs(repoRoot, target, ["--git"]),
     maxInlineDiffBytes
   );
 
@@ -392,11 +440,10 @@ export function collectReviewContext(cwd, target, options = {}) {
 
 export function getReviewSizeStats(cwd, target) {
   const repoRoot = getRepoRoot(cwd);
-  const fromRevset = target.baseRevset;
-  const toRevset = target.tipRevset;
-  const changedFiles = listChangedFiles(repoRoot, fromRevset, toRevset);
-  const stat = diffStat(repoRoot, fromRevset, toRevset);
-  return parseShortStat(stat, changedFiles.length);
+  const changedFiles = listChangedFiles(repoRoot, target);
+  const stat = diffStat(repoRoot, target);
+  const stats = parseShortStat(stat, changedFiles.length);
+  return { ...stats, branchBehind: commitsBehind(repoRoot, target) };
 }
 
 function parseShortStat(stat, fallbackFileCount) {

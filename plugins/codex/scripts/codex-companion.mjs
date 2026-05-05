@@ -760,6 +760,9 @@ function handleReviewPreflight(argv) {
     lines_removed: sizeStats.linesRemoved,
     recommendation
   };
+  if (sizeStats.branchBehind && sizeStats.branchBehind > 0) {
+    payload.branch_behind = sizeStats.branchBehind;
+  }
   if (options.json) {
     console.log(JSON.stringify(payload, null, 2));
     return;
