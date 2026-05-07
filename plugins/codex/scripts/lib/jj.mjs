@@ -3,7 +3,6 @@ import { formatCommandFailure, runCommand, runCommandChecked } from "./process.m
 const MAX_INLINE_DIFF_FILES = 2;
 const MAX_INLINE_DIFF_BYTES = 256 * 1024;
 
-const CHAIN_REVSET = "heads(::first_parent(@) & bookmarks())";
 const TRUNK_REVSET = "trunk()";
 const ROOT_REVSET = "root()";
 
@@ -110,8 +109,11 @@ function trunkIsRoot(cwd) {
   return result.stdout.trim() === "";
 }
 
-function chainBaseRevset(cwd) {
-  const closest = resolveRevsetToCommit(cwd, CHAIN_REVSET);
+function chainBaseRevset(cwd, tipRevset = "@") {
+  const closest = resolveRevsetToCommit(
+    cwd,
+    `heads(::first_parent(${tipRevset}) & bookmarks())`
+  );
   if (closest) {
     return { revset: closest, commit: closest, source: "bookmark" };
   }
@@ -174,6 +176,27 @@ function workingCopyHasChanges(cwd) {
   return result.stdout.trim() !== "";
 }
 
+// When `@` is the empty working copy left behind by `jj squash`, treating
+// `@` as the chain tip yields an empty diff against the parent bookmark.
+// Walk through any trailing empty commits to find the deepest non-empty
+// ancestor and use that as the effective tip.
+function effectiveTipRevset(cwd) {
+  if (workingCopyHasChanges(cwd)) {
+    return "@";
+  }
+  const result = jjChecked(cwd, [
+    "log",
+    "-r",
+    "heads(::@ & ~empty())",
+    "--no-graph",
+    "--limit",
+    "1",
+    "-T",
+    'commit_id ++ "\\n"'
+  ]);
+  return result.stdout.trim() || "@";
+}
+
 export function resolveReviewTarget(cwd, options = {}) {
   ensureRepository(cwd);
 
@@ -225,7 +248,8 @@ export function resolveReviewTarget(cwd, options = {}) {
     };
   }
 
-  const base = chainBaseRevset(cwd);
+  const tipRevset = effectiveTipRevset(cwd);
+  const base = chainBaseRevset(cwd, tipRevset);
   if (!base) {
     throw new Error(
       "Unable to detect a chain base: no ancestor bookmark and no trunk(). Pass --base <revset> or use --scope working-tree."
@@ -238,7 +262,7 @@ export function resolveReviewTarget(cwd, options = {}) {
     baseRevset: base.revset,
     baseCommit: base.commit,
     baseSource: base.source,
-    tipRevset: "@",
+    tipRevset,
     vcsKind: "jj",
     explicit: false
   };
